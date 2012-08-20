@@ -86,6 +86,9 @@ initialContext = Context [] [] [] 0 Set.empty
 -- Set the symbol for the concat symbol to be some symbol that won't appear in the regex
 concatSymbol = chr 0
 
+-- Set the symbol for the epsilon symbol to be some symbol that won't appear in the regex
+epsilonSymbol = chr 1
+
 -- The list of operators with their associated precedences
 operatorList = 
     [(concatSymbol,7),
@@ -111,19 +114,22 @@ isValue x = not $ isOperator x
 -- Run the parser over a string
 parseRegex str = (runState $
               do
-                mapM_ processChar (appendConcats str)
+                mapM_ processChar (appendConcatsAndEpsilons ("(" ++ str ++ ")"))
                 executeOperatorsUntilEmpty) initialContext
 
 
 -- Process the regex input string and 
 -- add concatSymbol where a concat operation implicitly should be
+-- add epsilonSymbol where we see we are doing a union on epsilon
 -- This makes the rest of the code more general instead of putting 
 -- special cases into it
-appendConcats (x:y:str) =  
+appendConcatsAndEpsilons ('(':'|':str) =  '(':epsilonSymbol:appendConcatsAndEpsilons ('|':str)
+appendConcatsAndEpsilons ('|':')':str) =  '|':epsilonSymbol:appendConcatsAndEpsilons (')':str)
+appendConcatsAndEpsilons (x:y:str) =  
     if ((isValue x || x == ')' || x == '*') && (isValue y || y == '('))
-    then x:concatSymbol:appendConcats (y:str)
-    else x : appendConcats (y:str)
-appendConcats x = x
+    then x:concatSymbol:appendConcatsAndEpsilons (y:str)
+    else x : appendConcatsAndEpsilons (y:str)
+appendConcatsAndEpsilons x = x
 
 
 -- Process a character from the input string
@@ -133,16 +139,23 @@ processChar x = do
     True -> processInput x
     False -> processOperatorOrParen x
 
--- When the next character is not an operator we create a transition whic
+
+-- When the next character is not an operator we create a transition which
 -- represents this character by creating two NFA nodes and adding a transition
 -- on that character between them
 processInput x = do 
   nodeFrom <- createNewNode
   nodeTo <- createNewNode
   st <- get
-  let newTrans = (nodeFrom, nodeTo, Just x) : (transitions st)
+  let isEpsilon = x == epsilonSymbol
+      getValue x = case isEpsilon of
+                   True -> epsilon
+                   False-> Just x
+      newTrans = (nodeFrom, nodeTo, getValue x) : (transitions st)
       newNodes = nodeTo : nodeFrom : (nodeList st)
-      newValues = Set.insert x $ values st
+      newValues = case isEpsilon of
+                    False -> Set.insert x $ values st
+                    True -> values st
   put $ st { nodeList = newNodes, transitions = newTrans, values = newValues}
   
 
